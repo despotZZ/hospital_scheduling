@@ -26,5 +26,6 @@ To run the optimization algorithm, execute the `main()` function in `optimize.py
 - numpy
 - ortools
 - deap
+- simanneal
 
 Install dependencies with `pip install -r requirements.txt`.

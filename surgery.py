@@ -4,6 +4,8 @@ import random
 from ortools.linear_solver import pywraplp
 from deap import base, creator, tools, algorithms
 import functools
+from simanneal import Annealer
+import time
 
 
 def read_excel_data(filepath):
@@ -90,6 +92,18 @@ def create_constraint_programming_model(
                 >= 1
             )
 
+    # Constraint: Ensure that the duration of all surgeries in a room does not exceed the available time
+    for room in operating_rooms:
+        solver.Add(
+            solver.Sum(
+                x[room, case_type, staff]
+                * df.loc[df["Case Type"] == case_type, "Surgery Duration"].values[0]
+                for case_type in case_types
+                for staff in range(n_medical_staff)
+            )
+            <= AVAILABLE_TIME
+        )
+
     # Minimize the sum of staff dissatisfaction
     objective = solver.Objective()
     for room in operating_rooms:
@@ -156,6 +170,49 @@ def evaluation_function(individual, resource_requirements, staff_preferences):
 
     # Return the total cost and dissatisfaction as a tuple
     return total_cost, total_dissatisfaction
+
+
+class SchedulingProblem(Annealer):
+    def __init__(self, state, toolbox):
+        super(SchedulingProblem, self).__init__(state)  # important!
+        self.toolbox = toolbox
+
+    def move(self):
+        """Swaps two staff in a random operating room and case type."""
+        # Select random operating room and case type
+        room_index = random.randint(0, len(self.state) - 1)
+        case_type_index = random.randint(0, len(self.state[room_index]) - 1)
+
+        # Select two random staff to swap
+        staff_a_index = random.randint(
+            0, len(self.state[room_index][case_type_index]) - 1
+        )
+        staff_b_index = random.randint(
+            0, len(self.state[room_index][case_type_index]) - 1
+        )
+
+        # Swap them
+        (
+            self.state[room_index][case_type_index][staff_a_index],
+            self.state[room_index][case_type_index][staff_b_index],
+        ) = (
+            self.state[room_index][case_type_index][staff_b_index],
+            self.state[room_index][case_type_index][staff_a_index],
+        )
+
+    def energy(self):
+        """Calculates the cost of the current state."""
+        return self.toolbox.evaluate(self.state)
+
+
+def simulated_annealing(toolbox, initial_state):
+    # Create a new annealing problem
+    problem = SchedulingProblem(initial_state, toolbox)
+    # since our state is just a list, slice is the fastest way to copy
+    problem.copy_strategy = "slice"
+    best_state, best_energy = problem.anneal()
+
+    return best_state, best_energy
 
 
 def genetic_algorithm(toolbox, n_medical_staff):
@@ -273,11 +330,35 @@ def main():
         case_types,
     )
 
+    # Run genetic algorithm
+    start_time = time.time()
     pop, logbook, hof = genetic_algorithm(toolbox, n_medical_staff)
+    end_time = time.time()
+    ga_time = end_time - start_time
+    ga_best_solution = hof[0]
+    ga_best_energy = toolbox.evaluate(ga_best_solution)
 
-    return pop, logbook, hof
+    # Run simulated annealing
+    start_time = time.time()
+    # Create an initial state for the annealing problem
+    initial_state = toolbox.population(n=1)[0]
+    # Use simulated annealing to find a good scheduling
+    best_state, best_energy = simulated_annealing(toolbox, initial_state)
+    end_time = time.time()
+    sa_time = end_time - start_time
+    sa_best_solution = best_state
+    sa_best_energy = best_energy
+
+    print("Genetic Algorithm:")
+    print("Time:", ga_time)
+    print("Best solution:", ga_best_solution)
+    print("Energy of the best solution:", ga_best_energy)
+
+    print("Simulated Annealing:")
+    print("Time:", sa_time)
+    print("Best solution:", sa_best_solution)
+    print("Energy of the best solution:", sa_best_energy)
 
 
 if __name__ == "__main__":
-    results = main()
-    print("Best solution found:", results[2][0])
+    main()
